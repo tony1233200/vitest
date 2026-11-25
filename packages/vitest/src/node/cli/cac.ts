@@ -71,6 +71,91 @@ function addCliOptions(cli: CAC | Command, options: CLIOptionsConfig<any>) {
   }
 }
 
+// An option with an optional value (e.g. `--update [type]`) makes cac
+// consume the following argument as its value, even when it is a file
+// filter, so `vitest run -u a.test.js` used to update every snapshot.
+// A following argument that the option does not accept is moved in front
+// of the option, so it stays a positional filter instead.
+function camelcaseOptionName(name: string): string {
+  return name
+    .split('.')
+    .map((part, index) =>
+      index === 0
+        ? part.replace(/([a-z])-([a-z])/g, (_, p1: string, p2: string) => p1 + p2.toUpperCase())
+        : part,
+    )
+    .join('.')
+}
+
+function collectOptionalValueOptions(cli: CAC): Map<string, (value: unknown) => unknown> {
+  const options = new Map<string, (value: unknown) => unknown>()
+  for (const command of [cli.globalCommand, ...cli.commands]) {
+    for (const option of command.options) {
+      if (option.required !== false || typeof option.config?.type !== 'function') {
+        continue
+      }
+      for (const name of option.names) {
+        options.set(name, option.config.type)
+      }
+    }
+  }
+  return options
+}
+
+function coerceCliValue(value: string): string | number {
+  // Mirror cac's number coercion for option values.
+  const number = Number(value)
+  return Number.isFinite(number) ? number : value
+}
+
+function normalizeOptionalValueArgs(
+  argv: string[],
+  options: Map<string, (value: unknown) => unknown>,
+): string[] {
+  const result = [...argv]
+  const endIndex = result.includes('--') ? result.indexOf('--') : result.length
+  let i = endIndex - 1
+  while (i >= 0) {
+    const arg = result[i]
+    const match = /^(--[^=]+|-[a-zA-Z])(?:=(.*))?$/.exec(arg)
+    if (!match) {
+      i--
+      continue
+    }
+    const [, nameArg, inlineValue] = match
+    if (inlineValue !== undefined) {
+      i--
+      continue
+    }
+    const transform = options.get(camelcaseOptionName(nameArg.replace(/^-+/, '')))
+    if (!transform) {
+      i--
+      continue
+    }
+    const next = result[i + 1]
+    if (next === undefined || next.startsWith('-')) {
+      i--
+      continue
+    }
+    let valid = true
+    try {
+      transform(coerceCliValue(next))
+    } catch {
+      valid = false
+    }
+    if (valid) {
+      i--
+      continue
+    }
+    // Move the file filter in front of the option, so the option keeps
+    // its bare value and cac does not consume the filter. The option is
+    // re-examined against its new next token.
+    result.splice(i, 2, next, arg)
+    i++
+  }
+  return result
+}
+
 export function createCLI(options: CliParseOptions = {}): CAC {
   if (isAgent && !isForceColor()) {
     disableDefaultColors()
@@ -193,6 +278,13 @@ export function createCLI(options: CliParseOptions = {}): CAC {
     .action((filters, options) => start(filters, options))
 
   setupTabCompletions(cli)
+
+  const optionalValueOptions = collectOptionalValueOptions(cli)
+  const parse = cli.parse.bind(cli)
+  cli.parse = ((argv?: string[], options?: { run?: boolean }) => {
+    const args = argv ?? process.argv
+    return parse(normalizeOptionalValueArgs(args, optionalValueOptions), options)
+  }) as CAC['parse']
   return cli
 }
 

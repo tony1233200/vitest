@@ -234,9 +234,14 @@ test('bail is parsed correctly', () => {
   expect(getCLIOptions('--bail=2')).toEqual({ bail: 2 })
   expect(getCLIOptions('--bail=0')).toEqual({ bail: 0 })
 
-  expect(() => getCLIOptions('--bail example.test.ts')).toThrowErrorMatchingInlineSnapshot(
+  expect(() => getCLIOptions('--bail=example.test.ts')).toThrowErrorMatchingInlineSnapshot(
     `[TypeError: Unexpected value "--bail=example.test.ts". Use "--bail=1 example.test.ts" instead.]`,
   )
+
+  // a following file is a filter, not the bail value
+  const { options, args } = parseArguments('--bail example.test.ts')
+  expect(options).toEqual({ bail: 1 })
+  expect(args).toEqual(['example.test.ts'])
 })
 
 test('project is parsed correctly', () => {
@@ -428,9 +433,45 @@ test('silent', () => {
   expect(getCLIOptions('--silent=passed-only')).toEqual({ silent: 'passed-only' })
   expect(getCLIOptions('--silent=true example.test.ts')).toEqual({ silent: true })
 
-  expect(() => getCLIOptions('--silent example.test.ts')).toThrowErrorMatchingInlineSnapshot(
+  expect(() => getCLIOptions('--silent=example.test.ts')).toThrowErrorMatchingInlineSnapshot(
     `[TypeError: Unexpected value "--silent=example.test.ts". Use "--silent=true example.test.ts" instead.]`,
   )
+
+  // a following file is a filter, not the silent value
+  const { options, args } = parseArguments('--silent example.test.ts')
+  expect(options).toEqual({ silent: true })
+  expect(args).toEqual(['example.test.ts'])
+})
+
+test('update is parsed correctly', () => {
+  // cac copies the raw value to the shorthand key, it is ignored by vitest
+  expect(getCLIOptions('--update')).toEqual({ u: true, update: true })
+  expect(getCLIOptions('-u')).toEqual({ u: true, update: true })
+  expect(getCLIOptions('--update=new')).toEqual({ u: 'new', update: 'new' })
+  expect(getCLIOptions('--update new')).toEqual({ u: 'new', update: 'new' })
+  expect(getCLIOptions('--update=all')).toEqual({ u: 'all', update: 'all' })
+  expect(getCLIOptions('--update=none')).toEqual({ u: 'none', update: 'none' })
+  expect(getCLIOptions('--update=false')).toEqual({ u: 'false', update: false })
+
+  expect(() => getCLIOptions('--update=banana')).toThrowErrorMatchingInlineSnapshot(
+    `[TypeError: Unexpected value "--update=banana". Use "--update=true banana" instead.]`,
+  )
+
+  // a following file is a filter, not the update value
+  const { options, args } = parseArguments('run -u a.test.js')
+  expect(options).toEqual({ u: true, update: true })
+  expect(args).toEqual(['a.test.js'])
+
+  expect(parseCLI('vitest run -u a.test.js')).toEqual({
+    filter: ['a.test.js'],
+    options: {
+      run: true,
+      u: true,
+      update: true,
+      '--': [],
+      color: true,
+    },
+  })
 })
 
 test('public parseCLI works correctly', () => {
